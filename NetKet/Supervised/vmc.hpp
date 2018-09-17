@@ -92,6 +92,7 @@ class SupervisedVariationalMonteCarlo {
   int ninitsamples_;
   int ndiscardedsamples_;
   int niter_opt_;
+  int batchsize_;
 
   std::complex<double> ratio_mean_;
   double elocvar_;
@@ -119,6 +120,9 @@ class SupervisedVariationalMonteCarlo {
     npar_ = psi_.Npar();
 
     opt_.Init(psi_.GetParameters());
+
+    // Hardcoded for testing
+    batchsize_ = 32;
 
     grad_.resize(npar_);
     Okmean_.resize(npar_);
@@ -188,20 +192,10 @@ class SupervisedVariationalMonteCarlo {
   void Sample() {
     sampler_.Reset();
 
+    vsamp_.resize(batchsize_, psi_.Nvisible());
+
     // Generate a batch from the data
-    data_.GenerateBatch(32, vsamp_);
-
-    /*    for (int i = 0; i < ndiscardedsamples_; i++) {
-          sampler_.Sweep();
-        }
-
-        vsamp_.resize(nsamples_node_, psi_.Nvisible());
-
-        for (int i = 0; i < nsamples_node_; i++) {
-          sampler_.Sweep();
-          vsamp_.row(i) = sampler_.Visible();
-        }
-      */
+    data_.GenerateBatch(batchsize_, vsamp_);
   }
 
   // Sets the name of the files on which the logs and the wave-function
