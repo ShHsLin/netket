@@ -36,7 +36,7 @@ struct matrix_hash : std::unary_function<T, size_t> {
     // matrices if they are the transpose of each other in different storage
     // order.
     size_t seed = 0;
-    for (size_t i = 0; i < matrix.size(); ++i) {
+    for (size_t i = 0; i < static_cast<unsigned int>(matrix.size()); ++i) {
       auto elem = *(matrix.data() + i);
       seed ^= std::hash<typename T::Scalar>()(elem) + 0x9e3779b9 + (seed << 6) +
               (seed >> 2);
