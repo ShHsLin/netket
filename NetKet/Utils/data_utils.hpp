@@ -77,6 +77,8 @@ class Data {
   std::unordered_map<VectorType, std::complex<double>, matrix_hash<VectorType>>
       config_2_amp;
 
+  std::random_device rd;  // Initialize the random generator (needs seed still)
+
  public:
   /// Constructor
   explicit Data(const json &pars, const json &supervisedPars) {
@@ -125,11 +127,12 @@ class Data {
     }
   }
 
+  // void GenerateBatch(unsigned int batchsize, MatrixType &data_out, MatrixType
+  // &target_out) {
   void GenerateBatch(unsigned int batchsize, MatrixType &out) {
     // Clip batchsize to number of samples
     if (batchsize >= ndata_) batchsize = ndata_;
 
-    std::random_device rd;  // only used once to initialise (seed) engine
     std::mt19937 rng(
         rd());  // random-number engine used (Mersenne-Twister in this case)
     std::uniform_int_distribution<int> uni(0, ndata_);  // guaranteed unbiased
@@ -138,6 +141,16 @@ class Data {
       auto random_integer = uni(rng);
       out.row(s) = configs.row(random_integer);
     }
+
+    /*
+    for( unsigned int s = 0; s < batchsize; ++s ) {
+      auto random_integer = uni(rng);
+      auto v = configs.row(random_integer);
+      data_out.row(s) = v;
+      target_out.row(s) = logVal(v);
+    }
+
+    */
   }
 
   std::complex<double> logVal(VectorType v) {
