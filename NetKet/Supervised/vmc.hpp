@@ -58,6 +58,8 @@ class SupervisedVariationalMonteCarlo {
   std::vector<std::complex<double>> mel_;
 
   Eigen::VectorXcd ratios_;
+  Eigen::VectorXd psi_sqr_;
+  Eigen::VectorXd phi_sqr_;
   MatrixT Ok_;
   VectorT Okmean_;
   Eigen::VectorXcd psi_log_amps_;
@@ -95,6 +97,7 @@ class SupervisedVariationalMonteCarlo {
   int batchsize_;
 
   std::complex<double> ratio_mean_;
+  double psi_sqr_mean_;
   double elocvar_;
   int npar_;
 
@@ -193,9 +196,10 @@ class SupervisedVariationalMonteCarlo {
     sampler_.Reset();
 
     vsamp_.resize(batchsize_, psi_.Nvisible());
+    phi_log_amps_.resize(batchsize_);
 
     // Generate a batch from the data
-    data_.GenerateBatch(batchsize_, vsamp_);
+    data_.GenerateBatch(batchsize_, vsamp_, phi_log_amps_);
   }
 
   // Sets the name of the files on which the logs and the wave-function
@@ -208,8 +212,8 @@ class SupervisedVariationalMonteCarlo {
   }
 
   void Gradient() {
-    // Gradient is consisted of three parts:
-    // <Ok>, <ratio * Ok>, <ratio>
+    // Gradient is consisted of four parts:
+    // <Ok |psi|^2>, < |psi|^2 > <ratio * Ok>, <ratio>
     obsmanager_.Reset("Ratio");
     obsmanager_.Reset("RatioVariance");
 
@@ -217,21 +221,27 @@ class SupervisedVariationalMonteCarlo {
       obsmanager_.Reset(obs_(i).Name());
     }
 
+    // vsamp_ ~ uniform not P{phi)
     const int nsamp = vsamp_.rows();
     ratios_.resize(nsamp);
+    psi_sqr_.resize(nsamp);
+    phi_sqr_.resize(nsamp);
     psi_log_amps_.resize(nsamp);
-    phi_log_amps_.resize(nsamp);
     Ok_.resize(nsamp, psi_.Npar());
 
+    // phi_log_amps_ are given at Sample()
+    // We only need to sample the wavefunction for psi_log_amps_
     for (int i = 0; i < nsamp; i++) {
       psi_log_amps_(i) = psi_.LogVal(vsamp_.row(i));
-      phi_log_amps_(i) = data_.logVal(vsamp_.row(i));
     }
     auto psi_log_amps_max_ = psi_log_amps_.real().maxCoeff();
     psi_log_amps_ -= psi_log_amps_max_ * Eigen::VectorXd::Ones(nsamp);
 
     for (int i = 0; i < nsamp; i++) {
-      ratios_(i) = std::exp(phi_log_amps_(i) - psi_log_amps_(i));
+      // ratio with reweighted factor for importance sampling
+      ratios_(i) = std::exp(std::conj(psi_log_amps_(i)) + phi_log_amps_(i));
+      psi_sqr_(i) = std::exp(2 * psi_log_amps_(i).real());
+      phi_sqr_(i) = std::exp(2 * phi_log_amps_(i).real());
       // ratios_(i) = Ratio(vsamp_.row(i));
       obsmanager_.Push("Ratio", ratios_(i).real());
       Ok_.row(i) = psi_.DerLog(vsamp_.row(i));
@@ -245,20 +255,37 @@ class SupervisedVariationalMonteCarlo {
     SumOnNodes(ratio_mean_);
     ratio_mean_ /= double(totalnodes_);
 
+    psi_sqr_mean_ = psi_sqr_.mean();
+    SumOnNodes(psi_sqr_mean_);
+    psi_sqr_mean_ /= double(totalnodes_);
+
     Okmean_ = Ok_.colwise().mean();
     SumOnNodes(Okmean_);
     Okmean_ /= double(totalnodes_);
 
-    Ok_ = Ok_.rowwise() - Okmean_.transpose();
+    // grad_ = <Ok |psi|^2> / <|psi|^2> - <Ok_.adjoint() * ratios_>/<ratios>
+    grad_ = (Ok_.adjoint() * psi_sqr_) / psi_sqr_mean_;
+    /*
+    std::complex<double> reweight_ratio_mean_;
+    reweight_ratio_mean_ = (ratios_.array() * phi_sqr_.array()).mean();
+    SumOnNodes(reweight_ratio_mean_);
+    reweight_ratio_mean_ /= double(totalnodes_);
+    grad_ -= (Ok_.adjoint() * (ratios_.array() * phi_sqr_.array()).matrix()) / reweight_ratio_mean_;
+    */
+    grad_ -= (Ok_.adjoint() * ratios_) / ratio_mean_;
+
+    // To compute the correct ratio of amplitude
+    for (int i = 0; i < nsamp; i++) {
+        ratios_(i) = std::exp((psi_log_amps_(i)) - phi_log_amps_(i));
+    }
+    ratio_mean_ = ratios_.mean();
+    SumOnNodes(ratio_mean_);
+    ratio_mean_ /= double(totalnodes_);
 
     ratios_ -= ratio_mean_ * Eigen::VectorXd::Ones(nsamp);
-
     for (int i = 0; i < nsamp; i++) {
       obsmanager_.Push("RatioVariance", std::norm(ratios_(i)));
     }
-
-    // grad_ = 2. * (Ok_.adjoint() * ratios_);
-    grad_ = -(Ok_.adjoint() * ratios_) / ratio_mean_;
 
     // Summing the gradient over the nodes
     SumOnNodes(grad_);

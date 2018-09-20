@@ -129,17 +129,19 @@ class Data {
 
   // void GenerateBatch(unsigned int batchsize, MatrixType &data_out, MatrixType
   // &target_out) {
-  void GenerateBatch(unsigned int batchsize, MatrixType &out) {
+  void GenerateBatch(unsigned int batchsize, MatrixType &config_sampled, Eigen::VectorXcd &log_amp_sampled) {
     // Clip batchsize to number of samples
     if (batchsize >= ndata_) batchsize = ndata_;
 
     std::mt19937 rng(
         rd());  // random-number engine used (Mersenne-Twister in this case)
-    std::uniform_int_distribution<int> uni(0, ndata_);  // guaranteed unbiased
+    std::uniform_int_distribution<int> uni(0, ndata_-1);  // guaranteed unbiased
 
     for (unsigned int s = 0; s < batchsize; ++s) {
       auto random_integer = uni(rng);
-      out.row(s) = configs.row(random_integer);
+      config_sampled.row(s) = configs.row(random_integer);
+      std::complex<double> amp_complex(amplitudes(s, 0), amplitudes(s, 1));
+      log_amp_sampled(s) = std::log(amp_complex);
     }
 
     /*
