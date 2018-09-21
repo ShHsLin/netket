@@ -127,15 +127,15 @@ class Data {
     }
   }
 
-  // void GenerateBatch(unsigned int batchsize, MatrixType &data_out, MatrixType
-  // &target_out) {
-  void GenerateBatch(unsigned int batchsize, MatrixType &config_sampled, Eigen::VectorXcd &log_amp_sampled) {
+  void GenerateBatch(unsigned int batchsize, MatrixType &config_sampled,
+                     Eigen::VectorXcd &log_amp_sampled) {
     // Clip batchsize to number of samples
     if (batchsize >= ndata_) batchsize = ndata_;
 
     std::mt19937 rng(
         rd());  // random-number engine used (Mersenne-Twister in this case)
-    std::uniform_int_distribution<int> uni(0, ndata_-1);  // guaranteed unbiased
+    std::uniform_int_distribution<int> uni(0,
+                                           ndata_ - 1);  // guaranteed unbiased
 
     for (unsigned int s = 0; s < batchsize; ++s) {
       auto random_integer = uni(rng);
@@ -143,17 +143,26 @@ class Data {
       std::complex<double> amp_complex(amplitudes(s, 0), amplitudes(s, 1));
       log_amp_sampled(s) = std::log(amp_complex);
     }
-
-    /*
-    for( unsigned int s = 0; s < batchsize; ++s ) {
-      auto random_integer = uni(rng);
-      auto v = configs.row(random_integer);
-      data_out.row(s) = v;
-      target_out.row(s) = logVal(v);
-    }
-
-    */
   }
+
+  // Generate Batch with user supplied random number generator
+  void GenerateBatch(unsigned int batchsize, MatrixType &config_sampled,
+                     Eigen::VectorXcd &log_amp_sampled, std::mt19937 rng) {
+    // Clip batchsize to number of samples
+    if (batchsize >= ndata_) batchsize = ndata_;
+
+    std::uniform_int_distribution<int> uni(0,
+                                           ndata_ - 1);  // guaranteed unbiased
+
+    for (unsigned int s = 0; s < batchsize; ++s) {
+      auto random_integer = uni(rng);
+      config_sampled.row(s) = configs.row(random_integer);
+      std::complex<double> amp_complex(amplitudes(s, 0), amplitudes(s, 1));
+      log_amp_sampled(s) = std::log(amp_complex);
+    }
+  }
+
+  unsigned int Ndata() { return ndata_; }
 
   std::complex<double> logVal(VectorType v) {
     return std::log(config_2_amp[v]);
