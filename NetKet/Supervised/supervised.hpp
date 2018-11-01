@@ -16,6 +16,7 @@
 #define NETKET_SUPERVISED_CC
 
 #include <memory>
+#include <string>
 
 #include "Optimizer/optimizer.hpp"
 #include "vmc.hpp"
@@ -25,7 +26,7 @@ namespace netket {
 class Supervised {
   using VectorType = Eigen::Matrix<std::complex<double>, Eigen::Dynamic, 1>;
 
-  int batchsize_ = 10;
+  int batchsize_ = 100;
 
   Eigen::MatrixXd inputs_;
   Eigen::VectorXcd targets_;
@@ -70,8 +71,8 @@ class Supervised {
       VectorType gradC(machine.Npar());
 
       std::cout << "Running epochs" << std::endl;
-      for (int epoch = 0; epoch < 10; ++epoch) {
-        int number_of_batches = floor(data.Ndata() / batchsize_);
+      for (int epoch = 0; epoch < 1000; ++epoch) {
+        int number_of_batches = ceil(data.Ndata() / float(batchsize_));
 
         for (int iteration = 0; iteration < number_of_batches; ++iteration) {
           // Generate a batch from the data
@@ -79,7 +80,11 @@ class Supervised {
 
           // Compute the gradients
           gradC.setZero();
-          for (int x = 0; x < batchsize_; ++x) {
+          std::complex<double> sum_aibi = 0;
+          std::complex<double> sum_aiai = 0;
+          std::complex<double> sum_bibi = 0;
+
+          for (int x = 0; x < inputs_.rows(); ++x) {
             Eigen::VectorXd config(inputs_.row(x));
 
             std::complex<double> value = machine.LogVal(config);
@@ -87,10 +92,14 @@ class Supervised {
             gradC = gradC + partial_gradient * (value - targets_(x));
 
             // std::cout << "Current gradient: " << gradC << std::endl;
+            sum_aibi += std::conj(value)*targets_(x);
+            sum_aiai += std::conj(value)*value;
+            sum_bibi += std::conj(targets_(x))*targets_(x);
           }
 
           // Update the parameters
-          double alpha = 1e-3;
+          double alpha = 1e-4;
+          std::cout<<" inner "<<sum_aibi/std::sqrt(sum_aiai)/std::sqrt(sum_bibi)<<" grad norm "<<gradC.norm()<<std::endl;
           machine.SetParameters(machine.GetParameters() - alpha * gradC);
         }
       }
