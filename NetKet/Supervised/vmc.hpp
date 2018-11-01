@@ -243,7 +243,6 @@ class SupervisedVariationalMonteCarlo {
       psi_sqr_(i) = std::exp(2 * psi_log_amps_(i).real());
       phi_sqr_(i) = std::exp(2 * phi_log_amps_(i).real());
       // ratios_(i) = Ratio(vsamp_.row(i));
-      obsmanager_.Push("Ratio", ratios_(i).real());
       Ok_.row(i) = psi_.DerLog(vsamp_.row(i));
 
       for (std::size_t k = 0; k < obs_.Size(); k++) {
@@ -263,7 +262,12 @@ class SupervisedVariationalMonteCarlo {
     SumOnNodes(Okmean_);
     Okmean_ /= double(totalnodes_);
 
-    // grad_ = <Ok |psi|^2> / <|psi|^2> - <Ok_.adjoint() * ratios_>/<ratios>
+    //
+    // grad_ = <Ok_.adjoint |psi/phi|^2>_phi / <|psi/phi|^2>_phi - <Ok_.adjoint() * ratios_> / <ratios>
+    // <Ok_.adjoint |psi/phi|^2>_phi == <Ok_.adjoint |psi/phi|^2 * |phi|^2/(1/N_batch) >_uniform
+    // <|psi/phi|^2>_phi ===== <|psi/phi|^2 * |phi|^2/(1/N_batch) >_uniform
+    //
+    // grad_ = <Ok_.adjoint |psi|^2>_uni / <|psi|^2>_uni - <Ok_.adjoint() * ratios_>/<ratios>
     grad_ = (Ok_.adjoint() * psi_sqr_) / psi_sqr_mean_;
     /*
     std::complex<double> reweight_ratio_mean_;
@@ -276,7 +280,8 @@ class SupervisedVariationalMonteCarlo {
 
     // To compute the correct ratio of amplitude
     for (int i = 0; i < nsamp; i++) {
-        ratios_(i) = std::exp((psi_log_amps_(i)) - phi_log_amps_(i));
+        ratios_(i) = std::exp(psi_log_amps_(i) - phi_log_amps_(i));
+        obsmanager_.Push("Ratio", ratios_(i).real());
     }
     ratio_mean_ = ratios_.mean();
     SumOnNodes(ratio_mean_);
