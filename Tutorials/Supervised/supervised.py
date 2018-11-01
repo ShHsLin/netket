@@ -45,13 +45,13 @@ pars['Machine'] = {
 
 #defining the Supervised learning method
 pars['Supervised'] = {
-    'Loss' : 'Overlap',
+    'Loss' : 'MSE',
     'Nsamples': 1.0e3,
-    'NiterOpt': 10000,
+    'NiterOpt': 1000,
     'InputFilename': "psi.json",
     'OutputFile': "test",
     'Method': 'Sr',
-    'LearningRate': 0.01,
+    'LearningRate': 0.00001,
 }
 
 # defining the sampler
@@ -64,7 +64,7 @@ pars['Sampler'] = {
 # here we use the Stochastic Gradient Descent
 pars['Optimizer'] = {
     'Name': 'Sgd',
-    'LearningRate': 0.1,
+    'LearningRate': 0.0001,
 }
 
 

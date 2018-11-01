@@ -28,11 +28,13 @@ while(True):
         evarsig.append(iteration["RatioVariance"]["Sigma"])
 
     plt.errorbar(iters,evar,yerr=evarsig,color='red')
+    # plt.errorbar(iters, sigma) #,yerr=evarsig,color='red')
     plt.axhline(y=exact, xmin=0, xmax=iters[-1], linewidth=2, color = 'k',label='Exact')
     nres=len(iters)
     if(nres>100):
         fitx=iters[-100:-1]
         fity=evar[-100:-1]
+        # fity=sigma[-100:-1]
         z=np.polyfit(fitx,fity,deg=0)
         p = np.poly1d(z)
 
