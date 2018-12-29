@@ -1,0 +1,7 @@
+README.md
+setup.py
+netket.egg-info/PKG-INFO
+netket.egg-info/SOURCES.txt
+netket.egg-info/dependency_links.txt
+netket.egg-info/not-zip-safe
+netket.egg-info/top_level.txt

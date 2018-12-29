@@ -15,102 +15,163 @@
 #ifndef NETKET_SUPERVISED_CC
 #define NETKET_SUPERVISED_CC
 
-#include <memory>
+#include <bitset>
+#include <complex>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
 #include <string>
-
+#include <vector>
+#include "Machine/machine.hpp"
 #include "Optimizer/optimizer.hpp"
-#include "vmc.hpp"
+#include "Sampler/abstract_sampler.hpp"
+#include "Stats/stats.hpp"
+#include "Utils/parallel_utils.hpp"
+#include "Utils/random_utils.hpp"
 
 namespace netket {
 
 class Supervised {
   using VectorType = Eigen::Matrix<std::complex<double>, Eigen::Dynamic, 1>;
 
+  using GsType = std::complex<double>;
+
+  AbstractSampler<AbstractMachine<GsType>> &sampler_;
+  AbstractMachine<GsType> &psi_;
+  AbstractOptimizer &opt_;
+
+  Eigen::VectorXcd grad_;
+
   int batchsize_ = 100;
+  // Batchsize per node
+  int batchsize_node_ = 100;
+
+  // Number of parameters of the machine
+  int npar_;
+
+  // Number of epochs for training
+  int niter_opt_ = 10;
+
+  std::vector<Eigen::VectorXd> trainingSamples_;
+  std::vector<Eigen::VectorXd> trainingTargets_;
+
+  netket::default_random_engine rgen_;
 
   Eigen::MatrixXd inputs_;
   Eigen::VectorXcd targets_;
 
  public:
-  explicit Supervised(const json &supervised_pars) {
-    // Relevant parameters for supervised learning
-    // is stored in supervised_pars.
-    CheckFieldExists(supervised_pars, "Supervised");
-    const std::string loss_name =
-        FieldVal(supervised_pars["Supervised"], "Loss", "Supervised");
+  Supervised(AbstractSampler<AbstractMachine<GsType>> &sampler,
+             AbstractOptimizer &opt, int batchsize, int niter_opt,
+             std::vector<Eigen::VectorXd> trainingSamples,
+             std::vector<Eigen::VectorXd> trainingTargets,
+             std::string output_file)
+      : sampler_(sampler),
+        psi_(sampler_.GetMachine()),
+        opt_(opt),
+        trainingSamples_(trainingSamples),
+        trainingTargets_(trainingTargets) {
+    batchsize_ = batchsize;
+    niter_opt_ = niter_opt;
 
-    // Input data is encoded in Json file with name "InputFilename".
-    auto data_json =
-        ReadJsonFromFile(supervised_pars["Supervised"]["InputFilename"]);
-    using DataType = Data<double>;
-    DataType data(data_json, supervised_pars);
+    npar_ = psi_.Npar();
 
-    // Make a machine using the Hilbert space extracted from
-    // the data.
-    using MachineType = Machine<std::complex<double>>;
-    MachineType machine(data.GetHilbert(), supervised_pars);
+    opt_.Init(psi_.GetParameters());
 
-    if (loss_name == "Overlap") {
-      // To do:
-      // Check whether we need more advance sampler, i.e. exchange or hop,
-      // which are constructed with Graph object provided?
-      Sampler<MachineType> sampler(machine, supervised_pars);
-      Optimizer optimizer(supervised_pars);
+    grad_.resize(npar_);
 
-      // To do:
-      // Consider adding function (Grad, Init, Run_Supervised) in VMC class,
-      // So we do not need to copy all the function VMC class again.
-      std::cout << " sampler created, optimizer created \n";
-      SupervisedVariationalMonteCarlo vmc(data, sampler, optimizer,
-                                          supervised_pars);
-      vmc.Run_Supervised();
-    } else if (loss_name == "MSE") {
-      inputs_.resize(batchsize_, machine.Nvisible());
-      targets_.resize(batchsize_);
+    MPI_Barrier(MPI_COMM_WORLD);
+  }
 
-      VectorType gradC(machine.Npar());
+  void Gradient(std::vector<Eigen::VectorXd> &batchSamples,
+                std::vector<Eigen::VectorXd> &batchTargets) {
+    // Vector for storing the derivatives
+    Eigen::VectorXcd der(psi_.Npar());
 
-      std::cout << "Running epochs" << std::endl;
-      for (int epoch = 0; epoch < 1000; ++epoch) {
-        int number_of_batches = ceil(data.Ndata() / float(batchsize_));
+    std::complex<double> t;
 
-        for (int iteration = 0; iteration < number_of_batches; ++iteration) {
-          // Generate a batch from the data
-          data.GenerateBatch(batchsize_, inputs_, targets_);
+    // Foreach sample in the batch
+    const int ndata = batchsize_node_;
+    der.setZero(psi_.Npar());
+    for (int i = 0; i < ndata; i++) {
+      // Extract log(config)
+      Eigen::VectorXd sample(batchSamples[i]);
+      std::complex<double> value = psi_.LogVal(sample);
 
-          // Compute the gradients
-          gradC.setZero();
-          std::complex<double> sum_aibi = 0;
-          std::complex<double> sum_aiai = 0;
-          std::complex<double> sum_bibi = 0;
+      // And the corresponding target
+      Eigen::VectorXd target(batchTargets[i]);
+      t.real(target[0]);
+      t.imag(target[1]);
 
-          for (int x = 0; x < inputs_.rows(); ++x) {
-            Eigen::VectorXd config(inputs_.row(x));
+      auto partial_gradient = psi_.DerLog(sample);
+      der = der + partial_gradient * (value - t);
+    }
+    grad_ = der;
 
-            std::complex<double> value = machine.LogVal(config);
-            auto partial_gradient = machine.DerLog(config);
-            gradC = gradC + partial_gradient * (value - targets_(x));
+    // Summing the gradient over the nodes
+    SumOnNodes(grad_);
+    // grad_ /= double(totalnodes_);
+  }
 
-            // std::cout << "Current gradient: " << gradC << std::endl;
-            sum_aibi += std::conj(value) * targets_(x);
-            sum_aiai += std::conj(value) * value;
-            sum_bibi += std::conj(targets_(x)) * targets_(x);
-          }
+  void Run() {
+    std::vector<Eigen::VectorXd> batchSamples;
+    std::vector<Eigen::VectorXd> batchTargets;
 
-          // Update the parameters
-          double alpha = 1e-4;
-          std::cout << " inner "
-                    << sum_aibi / std::sqrt(sum_aiai) / std::sqrt(sum_bibi)
-                    << " grad norm " << gradC.norm() << std::endl;
-          machine.SetParameters(machine.GetParameters() - alpha * gradC);
-        }
+    opt_.Reset();
+
+    // Initialize a uniform distribution to draw training samples from
+    std::uniform_int_distribution<int> distribution(
+        0, trainingSamples_.size() - 1);
+
+    for (int i = 0; i < niter_opt_; i++) {
+      int index;
+      batchSamples.resize(batchsize_node_);
+      batchTargets.resize(batchsize_node_);
+
+      // Randomly select a batch of training data
+      for (int k = 0; k < batchsize_node_; k++) {
+        // Draw from the distribution using the netket random number generator
+        index = distribution(rgen_);
+        batchSamples[k] = trainingSamples_[index];
+        batchTargets[k] = trainingTargets_[index];
       }
 
-    } else {
-      std::stringstream s;
-      s << "Unknown Supervised loss: " << loss_name;
-      throw InvalidInputError(s.str());
+      // Compute the gradient on the batch samples
+      Gradient(batchSamples, batchTargets);
+      UpdateParameters();
+      PrintMSE();
+
+      // std::cout << " grad norm " << grad_.norm() << std::endl;
     }
+  }
+
+  void UpdateParameters() {
+    auto pars = psi_.GetParameters();
+    opt_.Update(grad_, pars);
+    SendToAll(pars);
+    psi_.SetParameters(pars);
+    MPI_Barrier(MPI_COMM_WORLD);
+  }
+
+  void PrintMSE() {
+    const int numSamples = trainingSamples_.size();
+
+    std::complex<double> t;
+    std::complex<double> value;
+
+    std::complex<double> mse = 0.0;
+    for (int i = 0; i < numSamples; i++) {
+      Eigen::VectorXd sample = trainingSamples_[i];
+      Eigen::VectorXd target = trainingTargets_[i];
+
+      value = psi_.LogVal(sample);
+      t.real(target[0]);
+      t.imag(target[1]);
+
+      mse += pow(value - t, 2);
+    }
+
+    std::cout << "MSE: " << mse << std::endl;
   }
 };
 

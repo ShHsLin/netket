@@ -12,56 +12,51 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 from __future__ import print_function
-import json
+
+from mpi4py import MPI
+import netket as nk
+
+
+if MPI.COMM_WORLD.Get_size() > 1:
+    import sys
+    if MPI.COMM_WORLD.Get_rank() == 0:
+        print("Error: The exact imaginary time propagation currently only supports one MPI process")
+    sys.exit(1)
+
 
 L = 20
-pars = {}
 
 # defining the lattice
-pars['Graph'] = {
-    'Name': 'Hypercube',
-    'L': L,
-    'Dimension': 1,
-    'Pbc': True,
-}
+graph = nk.graph.Hypercube(L, n_dim=1, pbc=True)
 
-# defining the hamiltonian
-pars['Hamiltonian'] = {
-    'Name': 'Ising',
-    'h': 1.0,
-}
+# defining the hilbert space
+hilbert = nk.hilbert.Spin(graph, 0.5)
 
-sigmaxop = []
-sites = []
-for i in range(L):
-    # \sum_i sigma^x(i)
-    sigmaxop.append([[0, 1], [1, 0]])
-    sites.append([i])
+# defining the hamiltonian and wrap it as matrix
+hamiltonian = nk.operator.Ising(hilbert, h=1.0)
+mat = nk.operator.wrap_as_matrix(hamiltonian)
 
-pars['Observables'] = {
-    'Operators': sigmaxop,
-    'ActingOn': sites,
-    'Name': 'SigmaX',
-}
+# create time stepper
+stepper = nk.dynamics.create_timestepper(mat.dimension, rel_tol=1e-10, abs_tol=1e-10)
 
+# prepare output
+output = nk.output.JsonOutputWriter('test.log', 'test.wf')
 
-# defining the GroundState method
-# here we use exact imaginary time propagation
-pars['GroundState'] = {
-    'Method': 'ImaginaryTimePropagation',
-    'StartTime': 0,
-    'EndTime': 20,
-    'TimeStep': 0.1,
-    'OutputFile': "test",
-}
+# run from random initial state (does not need to be normalized, this is done
+# by the driver)
+import numpy as np
+psi0 = np.random.rand(mat.dimension)
 
-json_file = "ising1d_imag.json"
-with open(json_file, 'w') as outfile:
-    json.dump(pars, outfile)
+# create ground state driver
+driver = nk.exact.ImagTimePropagation(mat, stepper, t0=0, initial_state=psi0)
 
-print("\nGenerated Json input file: ", json_file)
-print("\nNow you have two options to run NetKet: ")
-print("\n1) Serial mode: netket " + json_file)
-print("\n2) Parallel mode: mpirun -n N_proc netket " + json_file)
+# add observable (TODO: more interesting observable)
+driver.add_observable(hamiltonian, 'Hamiltonian')
+
+for step in driver.iter(dt=0.05, n_iter=500):
+    print("it={:.2f}".format(driver.t))
+
+    obs = driver.get_observable_stats()
+    means = {k: v["Mean"] for k, v in obs.items()}
+    print("observables={}\n".format(means))
